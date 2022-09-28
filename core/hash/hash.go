@@ -9,6 +9,8 @@ import (
 
 // Hash returns the hash value of data.
 func Hash(data []byte) uint64 {
+	// murmur3非加密hash算法
+	// @see: https://huagetai.github.io/posts/fcfde8ff/
 	return murmur3.Sum64(data)
 }
 
