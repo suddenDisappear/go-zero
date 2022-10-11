@@ -99,12 +99,15 @@ type (
 // opts can be used to customize the Breaker.
 func NewBreaker(opts ...Option) Breaker {
 	var b circuitBreaker
+	// 通过配置函数配置breaker对象（内置支持WithName）
 	for _, opt := range opts {
 		opt(&b)
 	}
+	// 如果未配置名称则随机生成
 	if len(b.name) == 0 {
 		b.name = stringx.Rand()
 	}
+	// throttle内部生成(使用google breaker)
 	b.throttle = newLoggedThrottle(b.name, newGoogleBreaker())
 
 	return &b
@@ -142,6 +145,7 @@ func WithName(name string) Option {
 	}
 }
 
+// 默认acceptable不接受任何错误
 func defaultAcceptable(err error) bool {
 	return err == nil
 }
@@ -152,14 +156,16 @@ type loggedThrottle struct {
 	errWin *errorWindow
 }
 
+// newLoggedThrottle为throttle包装滚动错误窗口并增加日志记录
 func newLoggedThrottle(name string, t internalThrottle) loggedThrottle {
 	return loggedThrottle{
 		name:             name,
-		internalThrottle: t,
-		errWin:           new(errorWindow),
+		internalThrottle: t,                // 实际breaker
+		errWin:           new(errorWindow), // 错误滚动记录窗口
 	}
 }
 
+// 包装throttle的allow函数
 func (lt loggedThrottle) allow() (Promise, error) {
 	promise, err := lt.internalThrottle.allow()
 	return promiseWithReason{
@@ -168,6 +174,7 @@ func (lt loggedThrottle) allow() (Promise, error) {
 	}, lt.logError(err)
 }
 
+// 包装throttle的doReq函数
 func (lt loggedThrottle) doReq(req func() error, fallback func(err error) error, acceptable Acceptable) error {
 	return lt.logError(lt.internalThrottle.doReq(req, fallback, func(err error) bool {
 		accept := acceptable(err)
@@ -178,6 +185,7 @@ func (lt loggedThrottle) doReq(req func() error, fallback func(err error) error,
 	}))
 }
 
+// 错误处理切面-增加触发ErrServiceUnavailable时的日志记录
 func (lt loggedThrottle) logError(err error) error {
 	if err == ErrServiceUnavailable {
 		// if circuit open, not possible to have empty error window
@@ -189,6 +197,7 @@ func (lt loggedThrottle) logError(err error) error {
 	return err
 }
 
+// 滚动记录错误
 type errorWindow struct {
 	reasons [numHistoryReasons]string
 	index   int
@@ -198,17 +207,22 @@ type errorWindow struct {
 
 func (ew *errorWindow) add(reason string) {
 	ew.lock.Lock()
+	// 当前index记录错误原因
 	ew.reasons[ew.index] = fmt.Sprintf("%s %s", time.Now().Format(timeFormat), reason)
+	// 移动index（循环）
 	ew.index = (ew.index + 1) % numHistoryReasons
+	// 错误计数
 	ew.count = mathx.MinInt(ew.count+1, numHistoryReasons)
 	ew.lock.Unlock()
 }
 
+// 返回格式化错误
 func (ew *errorWindow) String() string {
 	var reasons []string
 
 	ew.lock.Lock()
 	// reverse order
+	// 反向顺序输出错误原因
 	for i := ew.index - 1; i >= ew.index-ew.count; i-- {
 		reasons = append(reasons, ew.reasons[(i+numHistoryReasons)%numHistoryReasons])
 	}
@@ -217,6 +231,7 @@ func (ew *errorWindow) String() string {
 	return strings.Join(reasons, "\n")
 }
 
+// 包装滚动错误窗口的promise，支持为Reject添加理由
 type promiseWithReason struct {
 	promise internalPromise
 	errWin  *errorWindow
