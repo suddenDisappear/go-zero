@@ -7,6 +7,7 @@ var (
 	breakers = make(map[string]Breaker)
 )
 
+// 包装从breakers获取breaker逻辑再操作，下面几个函数均同
 // Do calls Breaker.Do on the Breaker with given name.
 func Do(name string, req func() error) error {
 	return do(name, func(b Breaker) error {
@@ -37,6 +38,7 @@ func DoWithFallbackAcceptable(name string, req func() error, fallback func(err e
 }
 
 // GetBreaker returns the Breaker with the given name.
+// 获取或新建breaker
 func GetBreaker(name string) Breaker {
 	lock.RLock()
 	b, ok := breakers[name]
@@ -57,12 +59,14 @@ func GetBreaker(name string) Breaker {
 }
 
 // NoBreakerFor disables the circuit breaker for the given name.
+// 限制指定名称breaker使用
 func NoBreakerFor(name string) {
 	lock.Lock()
 	breakers[name] = newNoOpBreaker()
 	lock.Unlock()
 }
 
+// 根据传入execute函数对查找到的name熔断器执行操作
 func do(name string, execute func(b Breaker) error) error {
 	return execute(GetBreaker(name))
 }
